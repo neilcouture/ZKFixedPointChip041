@@ -5,6 +5,7 @@ use halo2_base::{
 use log::warn;
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use std::convert::From;
+use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
 
 #[derive(Clone, Debug)]
 pub struct LinearRegressionChip<F: BigPrimeField> {
@@ -14,7 +15,10 @@ pub struct LinearRegressionChip<F: BigPrimeField> {
 
 impl<F: BigPrimeField> LinearRegressionChip<F> {
     pub fn new(lookup_bits: usize) -> Self {
-        let chip = FixedPointChip::<F, 32>::default(lookup_bits);
+
+        let mut bsb = BaseCircuitBuilder::new(true);
+        bsb.set_lookup_bits(lookup_bits);
+        let chip = FixedPointChip::<F, 32>::default(lookup_bits, &bsb);
 
         Self { chip, lookup_bits }
     }

@@ -1,25 +1,45 @@
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::AssignedValue;
 use halo2_base::Context;
-use halo2_scaffold::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
+use zk_fixed_point_chip::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
+use zk_fixed_point_chip::scaffold::cmd::{Cli, SnarkCmd};
 #[allow(unused_imports)]
-use halo2_scaffold::scaffold::{mock, prove};
+
+use zk_fixed_point_chip::scaffold::run;
 use std::env::{var, set_var};
+use clap::Parser;
+use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
+use linfa_linear::LinearRegression;
+use serde::{Deserialize, Serialize};
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CircuitInput {
+    pub x: String, // field element, but easier to deserialize as a string
+}
 
 fn some_algorithm_in_zk<F: ScalarField>(
-    ctx: &mut Context<F>,
-    x: f64,
+    builder: &mut BaseCircuitBuilder<F>,
+    input: CircuitInput,
     make_public: &mut Vec<AssignedValue<F>>,
-) where F: BigPrimeField {
+) where F: BigPrimeField
+{
+    //let x:f64 = f64::from_string(&input.x).unwrap(); //F::from_str_vartime(&input.x).expect("deserialize field element should not fail");
+
+    let x:f64 = input.x.parse().unwrap(); //F::from_str_vartime(&input.x).expect("deserialize field element should not fail");
+
+    let b2 = builder.clone();
+
     // `Context` can roughly be thought of as a single-threaded execution trace of a program we want to ZK prove. We do some post-processing on `Context` to optimally divide the execution trace into multiple columns in a PLONKish arithmetization
     // More advanced usage with multi-threaded witness generation is possible, but we do not explain it here
+    let ctx = builder.main(0);
 
     // lookup bits must agree with the size of the lookup table, which is specified by an environmental variable
     let lookup_bits =
         var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
     const PRECISION_BITS: u32 = 32;
     // fixed-point exp arithmetic
-    let fixed_point_chip = FixedPointChip::<F, PRECISION_BITS>::default(lookup_bits);
+    let fixed_point_chip = FixedPointChip::<F, PRECISION_BITS>::default(lookup_bits, &b2);
 
     let x_decimal = x;
     let x = fixed_point_chip.quantization(x);
@@ -66,11 +86,36 @@ fn some_algorithm_in_zk<F: ScalarField>(
 }
 
 fn main() {
+
+    // let lin_reg = LinearRegression::new();
+
     env_logger::init();
     // genrally lookup_bits is degree - 1
     set_var("LOOKUP_BITS", 12.to_string());
     set_var("DEGREE", 13.to_string());
 
+    let mut args_mock = Cli::parse();
+    let mut args_keygen = Cli::parse();
+    let mut args_proove = Cli::parse();
+    let mut args_verify =  Cli::parse();
+
+    println!("invoking mock...");
+    args_mock.command = SnarkCmd::Mock;
+    run(some_algorithm_in_zk, args_mock);
+
+    println!("\ninvoking keygen...");
+    args_keygen.command = SnarkCmd::Keygen;
+    run(some_algorithm_in_zk, args_keygen);
+
+    println!("\ninvoking prove...");
+    args_proove.command = SnarkCmd::Prove;
+    run(some_algorithm_in_zk, args_proove);
+
+    println!("\ninvoking verify...");
+    args_verify.command = SnarkCmd::Verify;
+    run(some_algorithm_in_zk, args_verify);
+
+    println!("\nDone!");
     // run mock prover
     // mock(some_algorithm_in_zk, -12.0);
     // mock(some_algorithm_in_zk, -1.88724767676867);
@@ -79,13 +124,6 @@ fn main() {
     // mock(some_algorithm_in_zk, 1.128);
     // mock(some_algorithm_in_zk, 2.0);
     // mock(some_algorithm_in_zk, 4.0);
-    mock(some_algorithm_in_zk, 0.25 * std::f64::consts::PI);
 
-    // uncomment below to run actual prover:
-    // the 3rd parameter is a dummy input to provide for the proving key generation
-    prove(
-        some_algorithm_in_zk,
-        0.25 * std::f64::consts::PI,
-        0.5 * std::f64::consts::PI
-    );
+
 }

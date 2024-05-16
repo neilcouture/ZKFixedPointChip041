@@ -1,6 +1,6 @@
 use halo2_base::QuantumCell::{Constant, Existing, Witness};
 use halo2_base::{
-    gates::{range::RangeStrategy, GateChip, GateInstructions, RangeChip, RangeInstructions},
+    gates::{GateChip, GateInstructions, RangeChip, RangeInstructions},
     utils::{biguint_to_fe, fe_to_biguint, BigPrimeField, ScalarField},
     AssignedValue, Context, QuantumCell,
 };
@@ -8,18 +8,19 @@ use num_bigint::BigUint;
 use num_integer::Integer;
 use std::ops::Mul;
 use std::{fmt::Debug, ops::Sub};
+use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum FixedPointStrategy {
-    Vertical, // vanilla implementation with vertical basic gate(s)
-}
+// #[derive(Clone, Copy, Debug, PartialEq)]
+// pub enum FixedPointStrategy {
+//     Vertical, // vanilla implementation with vertical basic gate(s)
+// }
 
 /// `PRECISION_BITS` indicates the precision of integer and fractional parts.
 /// For example, `PRECISION_BITS = 32` indicates this chip implements 32.32 fixed point decimal arithmetics.
 /// The valid range of the fixed point decimal is -max_value < x < max_value.
 #[derive(Clone, Debug)]
 pub struct FixedPointChip<F: BigPrimeField, const PRECISION_BITS: u32> {
-    strategy: FixedPointStrategy,
+    //strategy: FixedPointStrategy,
     pub gate: RangeChip<F>,
     pub quantization_scale: F,
     pub max_value: BigUint,
@@ -30,16 +31,15 @@ pub struct FixedPointChip<F: BigPrimeField, const PRECISION_BITS: u32> {
 }
 
 impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS> {
-    pub fn new(strategy: FixedPointStrategy, lookup_bits: usize) -> Self {
+    pub fn new(lookup_bits: usize, bsb: &BaseCircuitBuilder<F>) -> Self {
         // Note 254/4 = 63.5
         assert!(PRECISION_BITS <= 63, "support only precision bits <= 63");
         assert!(PRECISION_BITS >= 32, "support only precision bits >= 32");
-        let gate = RangeChip::new(
-            match strategy {
-                FixedPointStrategy::Vertical => RangeStrategy::Vertical,
-            },
-            lookup_bits,
-        );
+
+        // let ONE : F = F::ONE;
+
+        let gate = bsb.range_chip();
+
         // Simple uniform symmetric quantization scheme which enforces zero point to be exactly 0
         // to reduce lots of computations.
         // Quantization: x_q = xS where S is `quantization_scale`
@@ -55,20 +55,19 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BI
         );
         // -max_value % m = negative_point
         // doesn't seem like the +1 is required here
-        let negative_point = bn254_max - F::from_u128(2u128.pow(PRECISION_BITS * 2 + 1)) + F::one();
+        let negative_point = bn254_max - F::from_u128(2u128.pow(PRECISION_BITS * 2 + 1)) + F::ONE; //<F>::one();
         // min_value < x < max_value
         let max_value = BigUint::from(2u32).pow(PRECISION_BITS * 2);
 
         let mut pow_of_two = Vec::with_capacity(F::NUM_BITS as usize);
         let two = F::from(2);
-        pow_of_two.push(F::one());
+        pow_of_two.push(F::ONE);
         pow_of_two.push(two);
         for _ in 2..F::NUM_BITS {
             pow_of_two.push(two * pow_of_two.last().unwrap());
         }
 
         Self {
-            strategy,
             gate,
             quantization_scale,
             max_value,
@@ -79,37 +78,63 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BI
         }
     }
 
-    pub fn default(lookup_bits: usize) -> Self {
-        Self::new(FixedPointStrategy::Vertical, lookup_bits)
+    pub fn default(lookup_bits: usize, bsb: &BaseCircuitBuilder<F>) -> Self {
+        Self::new(lookup_bits, bsb)
     }
+
+
+    fn nh_get_lower_128(&self, num : F) -> u128
+    {
+        let bytes = num.to_bytes_le();
+        let mut lower_128 = 0u128;
+        for (i, byte) in bytes.into_iter().enumerate().take(8) {
+            lower_128 |= (byte as u128) << (i * 8);
+        }
+        lower_128
+    }
+
+    fn nh_from_bytes_wide(&self, bytes: &[u8; 64]) -> F
+    {
+        F::from_uniform_bytes(bytes)
+    }
+
 
     pub fn quantization(&self, x: f64) -> F {
         let sign = x.signum();
         let x = x.abs();
-        let x_q = (x * self.quantization_scale.get_lower_128() as f64).round() as u128;
+
+        //let x_q = (x * self.quantization_scale.get_lower_128() as f64).round() as u128;
+
+        let x_q = (x * self.nh_get_lower_128(self.quantization_scale) as f64).round() as u128;
+
         let x_q_biguint = BigUint::from(x_q).to_bytes_le();
         let mut x_q_bytes_le = [0u8; 64];
         for (idx, val) in x_q_biguint.iter().enumerate() {
             x_q_bytes_le[idx] = *val;
         }
-        let mut x_q_f = F::from_bytes_wide(&x_q_bytes_le);
+        let mut x_q_f = self.nh_from_bytes_wide(&x_q_bytes_le);
         if sign < 0.0 {
-            x_q_f = self.bn254_max - x_q_f + F::one();
+            x_q_f = self.bn254_max - x_q_f + F::ONE;
         }
 
         x_q_f
     }
 
+
     pub fn dequantization(&self, x: F) -> f64 {
         let mut x_mut = x;
         let negative = if x > self.negative_point {
-            x_mut = self.bn254_max - x - F::one(); // Shouldn't this be +F::one()?
+            x_mut = self.bn254_max - x - F::ONE; // Shouldn't this be +F::one()?
             -1f64
         } else {
             1f64
         };
-        let x_u128: u128 = x_mut.get_lower_128();
-        let quantization_scale = self.quantization_scale.get_lower_128();
+        //let x_u128: u128 = x_mut.get_lower_128();
+        let x_u128: u128 = self.nh_get_lower_128(x_mut);
+        //let quantization_scale = self.quantization_scale.get_lower_128();
+
+        let quantization_scale = self.nh_get_lower_128(self.quantization_scale);
+
         let x_int = (x_u128 / quantization_scale) as f64;
         let x_frac = (x_u128 % quantization_scale) as f64 / quantization_scale as f64;
         let x_deq = negative * (x_int + x_frac);
@@ -208,7 +233,6 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     fn gate(&self) -> &Self::Gate;
     /// returns the RangeGateChip associated with the FixedPointChip
     fn range_gate(&self) -> &Self::RangeGate;
-    fn strategy(&self) -> FixedPointStrategy;
 
     fn qabs(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
     where
@@ -257,12 +281,12 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     where
         F: BigPrimeField,
     {
-        let a = self.gate().add(ctx, Constant(F::zero()), a.into());
-        let b = self.gate().add(ctx, Constant(F::zero()), b.into());
+        let a = self.gate().add(ctx, Constant(F::ZERO), a.into());
+        let b = self.gate().add(ctx, Constant(F::ZERO), b.into());
         self.gate().assert_bit(ctx, a);
         self.gate().assert_bit(ctx, b);
         let ab = self.gate().add(ctx, a, b);
-        let one = self.gate().add(ctx, Constant(F::one()), Constant(F::zero()));
+        let one = self.gate().add(ctx, Constant(F::ONE), Constant(F::ZERO));
         let xor = self.gate().is_equal(ctx, ab, one);
 
         xor
@@ -473,9 +497,6 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         &self.gate.gate()
     }
 
-    fn strategy(&self) -> FixedPointStrategy {
-        self.strategy
-    }
 
     /// Adds the given numbers and returns their sum
     /// Simply uses the GateChip fn add
@@ -561,7 +582,7 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
     where
         F: BigPrimeField,
     {
-        let pos_one = Constant(F::one());
+        let pos_one = Constant(F::ONE);
         // (-1) % m where m = 2^254
         let neg_one = self.gate().neg(ctx, pos_one);
         let is_neg = self.is_neg(ctx, a);
@@ -644,7 +665,7 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         let b = b.into();
         let a_sign = self.is_neg(ctx, a);
         let b_sign = self.is_neg(ctx, b);
-        self.gate().assert_is_const(ctx, &b_sign, &F::zero());
+        self.gate().assert_is_const(ctx, &b_sign, &F::ZERO);
         let a_abs = self.qabs(ctx, a);
         let a_num_bits = PRECISION_BITS as usize * 4;
         let b_num_bits = PRECISION_BITS as usize * 2;
@@ -693,10 +714,10 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         QA: Into<QuantumCell<F>> + Debug + Copy,
     {
         let x = x.into();
-        let mut intermediates = vec![Constant(F::zero())];
+        let mut intermediates = vec![Constant(F::ZERO)];
         let coef_iter: Vec<QA> = coef.into_iter().collect();
         let last_idx_coef = coef_iter.len() - 1;
-        let mut result: AssignedValue<F> = self.qadd(ctx, x, Constant(F::zero()));
+        let mut result: AssignedValue<F> = self.qadd(ctx, x, Constant(F::ZERO));
         for (idx, c) in coef_iter.into_iter().enumerate() {
             let last_y = *intermediates.get(intermediates.len() - 1).unwrap();
             let y_add = self.qadd(ctx, last_y, c);
@@ -723,15 +744,15 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         let range_bits = PRECISION_BITS as usize * 2;
         let bits = self.gate().num_to_bits(ctx, pow2_exponent, range_bits);
         let sum_of_bits = self.gate().sum(ctx, bits.clone());
-        let sum_of_bits_m1 = self.gate().sub(ctx, sum_of_bits, Constant(F::one()));
+        let sum_of_bits_m1 = self.gate().sub(ctx, sum_of_bits, Constant(F::ONE));
         let is_zero = self.gate().is_zero(ctx, sum_of_bits_m1);
         // ensure the bits of pow2_exponent has only one of bit one.
-        self.gate().assert_is_const(ctx, &is_zero, &F::one());
+        self.gate().assert_is_const(ctx, &is_zero, &F::ONE);
         let bit = self.gate().select_from_idx(ctx, bits.into_iter().map(|x| Existing(x)), exponent);
-        let bit_m1 = self.gate().sub(ctx, bit, Constant(F::one()));
+        let bit_m1 = self.gate().sub(ctx, bit, Constant(F::ONE));
         let is_zero_bit_m1 = self.gate().is_zero(ctx, bit_m1);
         // ensures bits[expnent] is exact bit one
-        self.gate().assert_is_const(ctx, &is_zero_bit_m1, &F::one());
+        self.gate().assert_is_const(ctx, &is_zero_bit_m1, &F::ONE);
     }
 
     fn qexp2(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
@@ -765,11 +786,11 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         F: BigPrimeField,
     {
         let a = a.into();
-        let a_assigned = self.gate().add(ctx, a, Constant(F::zero()));
+        let a_assigned = self.gate().add(ctx, a, Constant(F::ZERO));
         let is_neg = self.is_neg(ctx, a);
         let is_zero = self.gate().is_zero(ctx, a_assigned);
         let is_invalid = self.gate().or(ctx, is_neg, is_zero);
-        self.gate().assert_is_const(ctx, &is_invalid, &F::zero());
+        self.gate().assert_is_const(ctx, &is_invalid, &F::ZERO);
         let num_bits = (PRECISION_BITS * 2) as usize;
         let num_digits = a_assigned
             .value()
@@ -780,11 +801,11 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
             .enumerate()
             .fold(1u64, |acc, (idx, val)| if val == 1u64 { idx as u64 } else { acc });
         let pow1 = self.gate().pow_of_two()[num_digits as usize];
-        let pow1_witness = self.gate().add(ctx, Witness(pow1), Constant(F::zero()));
-        let exp1 = self.gate().add(ctx, Witness(F::from(num_digits)), Constant(F::zero()));
+        let pow1_witness = self.gate().add(ctx, Witness(pow1), Constant(F::ZERO));
+        let exp1 = self.gate().add(ctx, Witness(F::from(num_digits)), Constant(F::ZERO));
         self.check_power_of_two(ctx, pow1_witness, exp1);
         let pow2_witness = self.gate().mul(ctx, pow1_witness, Constant(F::from(2)));
-        let exp2 = self.gate().add(ctx, exp1, Constant(F::one()));
+        let exp2 = self.gate().add(ctx, exp1, Constant(F::ONE));
         self.check_power_of_two(ctx, pow2_witness, exp2);
         // pow1 <= a < pow2, pow1 = 2^n, pow2 = 2^{n+1}
         let a_lt_pow2 = self.range_gate().is_less_than(ctx, a, pow2_witness, num_bits);
@@ -792,14 +813,14 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         let a_eq_pow1 = self.gate().is_equal(ctx, a, pow1_witness);
         let a_ge_pow1 = self.gate().or(ctx, a_eq_pow1, a_gt_pow1);
         let a_bound = self.gate().and(ctx, a_lt_pow2, a_ge_pow1);
-        self.gate().assert_is_const(ctx, &a_bound, &F::one());
+        self.gate().assert_is_const(ctx, &a_bound, &F::ONE);
 
         // shift a to ensure a = 2^m * k, m \in Z, 2^{1} <= k < 2^{2}
         let shift = self.gate().sub(ctx, Constant(F::from(PRECISION_BITS as u64 + 2)), exp2);
         let is_shift_neg = self.is_neg(ctx, shift);
         let shift_abs = self.qabs(ctx, shift);
         let shift_pow2 = self.gate().pow_of_two()[shift_abs.value().get_lower_32() as usize];
-        let shift_pow2_witness = self.gate().add(ctx, Witness(shift_pow2), Constant(F::zero()));
+        let shift_pow2_witness = self.gate().add(ctx, Witness(shift_pow2), Constant(F::ZERO));
         self.check_power_of_two(ctx, shift_pow2_witness, shift_abs);
         let a_ls = self.gate().mul(ctx, a, shift_pow2_witness);
         let (a_rs, _) = self.range_gate().div_mod_var(
@@ -830,12 +851,12 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
     where
         F: BigPrimeField,
     {
-        let a = self.gate().add(ctx, Constant(<F>::zero()), a.into());
-        let b = self.gate().add(ctx, Constant(<F>::zero()), b.into());
+        let a = self.gate().add(ctx, Constant(F::ZERO), a.into());
+        let b = self.gate().add(ctx, Constant(F::ZERO), b.into());
         self.gate().assert_bit(ctx, a);
         self.gate().assert_bit(ctx, b);
         let ab = self.gate().add(ctx, a, b);
-        let one = self.gate().add(ctx, Constant(<F>::one()), Constant(<F>::zero()));
+        let one = self.gate().add(ctx, Constant(F::ONE), Constant(F::ZERO));
         let xor = self.gate().is_equal(ctx, ab, one);
 
         xor
@@ -893,8 +914,8 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         let b: Vec<QA> = b.into_iter().collect();
         assert!(a.len() == b.len());
         // using the fact that FixedPointChip's 0 is at F::zero()
-        let mut res_s = ctx.load_witness(F::zero());
-        self.gate().assert_is_const(ctx, &res_s, &F::zero());
+        let mut res_s = ctx.load_witness(F::ZERO);
+        self.gate().assert_is_const(ctx, &res_s, &F::ZERO);
 
         for (ai, bi) in a.iter().zip(b.iter()).into_iter() {
             res_s = self.gate().mul_add(ctx, *ai, *bi, res_s);
@@ -1022,7 +1043,7 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         // because of the above reasoning this correctly calculates whether a is supposed to be negative or not
         let a_is_neg = fe_to_biguint(a.value()) > BigUint::from(2u32).pow(252u32);
         let (q, r) = if a_is_neg {
-            let a_abs = fe_to_biguint(&(self.bn254_max - a.value() + F::one()));
+            let a_abs = fe_to_biguint(&(self.bn254_max - a.value() + F::ONE));
             let q = fe_to_biguint(&self.bn254_max) - a_abs.div_ceil(&b) + BigUint::from(1u32);
             let r = fe_to_biguint::<F>(a.value())
                 - fe_to_biguint::<F>(
