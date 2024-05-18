@@ -17,10 +17,10 @@ clap-num = "1.0.2"
 num-bigint = "0.4"
 num-integer = "0.1"
 itertools = "0.10.5"
-hex = "0.4.3"
+hex = "0.4.1"
 
 halo2-base = "0.4.1"
-axiom-eth = "0.4.2"
+axiom-eth = "0.4.1"
 snark-verifier-sdk = "0.1.7"
 halo2_proofs = "0.3.0"
 
@@ -30,18 +30,6 @@ linfa-logistic = "0.7.0"
 ndarray = "0.15.6"
 linfa-datasets = { version = "0.7.0", features = ["diabetes", "winequality"] }
 num-traits = "0.2.18"
-
-# halo2
-# halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02" }
-
-# Axiom's helper API with basic functions 
-#halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", tag = "v0.3.0-ce" }
-# Axiom poseidon chip (adapted from Scroll)
-# poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", tag = "v0.3.0-ce" }
-# Axiom Evm wrapper 
-# These are just for making proving executables, if you are just building a library you don't need them as dependencies in your project
-#axiom-eth = { git = "https://github.com/axiom-crypto/axiom-eth.git", branch = "community-edition", default-features = false, features = ["halo2-axiom", "aggregation", "evm", "clap"] }
-#snark-verifier-sdk = { git = "https://github.com/axiom-crypto/snark-verifier.git", tag = "v0.1.1-ce", default-features = false, features = ["loader_halo2"] }
 
 [dev-dependencies]
 test-log = "0.2.11"
