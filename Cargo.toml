@@ -19,8 +19,9 @@ num-integer = "0.1"
 itertools = "0.10.5"
 hex = "0.4.1"
 
-halo2-base = "0.4.1"
-axiom-eth = "0.4.1"
+halo2-axiom = "= 0.4.1"
+halo2-base = "= 0.4.1"
+axiom-eth = "= 0.4.1"
 snark-verifier-sdk = "0.1.7"
 halo2_proofs = "0.3.0"
 
