@@ -32,6 +32,7 @@ pub struct FixedPointChip041<'a, F: BigPrimeField, const PRECISION_BITS: u32> {
 
 impl<'a, F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip041<'a, F, PRECISION_BITS> {
 
+    /// Set gate Option
     pub fn set_gate(&mut self, rc: &'a RangeChip<F>)
     {
         self.gate = Some(rc);
