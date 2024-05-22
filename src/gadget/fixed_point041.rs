@@ -32,7 +32,7 @@ pub struct FixedPointChip041<'a, F: BigPrimeField, const PRECISION_BITS: u32> {
 
 impl<'a, F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip041<'a, F, PRECISION_BITS> {
 
-    pub fn set_range_chip(&mut self, rc: &'a RangeChip<F>)
+    pub fn set_gate(&mut self, rc: &'a RangeChip<F>)
     {
         self.gate = Some(rc);
     }
@@ -73,7 +73,7 @@ impl<'a, F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip041<'a, F, P
             pow_of_two.push(two * pow_of_two.last().unwrap());
         }
         Self {
-            gate:None,
+            gate:None,              // make sure to call set_range_chip ! or get unwrap panic!
             quantization_scale,
             max_value,
             bn254_max,
@@ -492,11 +492,11 @@ impl<'a, F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions041<
     type RangeGate = RangeChip<F>;
 
     fn range_gate(&self) -> &Self::RangeGate {
-        &self.gate.unwrap()
+        &self.gate
     }
 
     fn gate(&self) -> &Self::Gate {
-        &self.gate.unwrap().gate()
+        &self.gate.gate()
     }
 
 
