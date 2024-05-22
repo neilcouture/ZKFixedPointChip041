@@ -1,4 +1,7 @@
-# ZKFixedPointChip
+# ZKFixedPointChip041
+
+To Run `examples/linear_regression.rs` :: `run  --package zk_fixed_point_chip  --example linear_regression -- --name lr -k 16 mock`
+To Run `examples/fixed_point041` :: `run  --package zk_fixed_point_chip  --example fixed_point041 -- --name fp041 -k 16 mock`
 
 ZK Fixed Point Arithmetic with its Application in Machine Learning based on [Halo2](https://github.com/privacy-scaling-explorations/halo2.git) & Axiom's [Halo2-base](https://github.com/axiom-crypto/halo2-lib).
 

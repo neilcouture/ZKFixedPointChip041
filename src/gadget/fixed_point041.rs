@@ -19,9 +19,9 @@ use halo2_base::gates::circuit::builder::BaseCircuitBuilder;
 /// For example, `PRECISION_BITS = 32` indicates this chip implements 32.32 fixed point decimal arithmetics.
 /// The valid range of the fixed point decimal is -max_value < x < max_value.
 #[derive(Clone, Debug)]
-pub struct FixedPointChip<F: BigPrimeField, const PRECISION_BITS: u32> {
+pub struct FixedPointChip041<'a, F: BigPrimeField, const PRECISION_BITS: u32> {
     //strategy: FixedPointStrategy,
-    pub gate: RangeChip<F>,
+    pub gate: Option<&'a RangeChip<F>>,
     pub quantization_scale: F,
     pub max_value: BigUint,
     pub bn254_max: F,
@@ -30,17 +30,21 @@ pub struct FixedPointChip<F: BigPrimeField, const PRECISION_BITS: u32> {
     pub pow_of_two: Vec<F>,
 }
 
-impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS> {
+impl<'a, F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip041<'a, F, PRECISION_BITS> {
 
+    pub fn set_range_chip(&mut self, rc: &'a RangeChip<F>)
+    {
+        self.gate = Some(rc);
+    }
 
-    pub fn new(lookup_bits: usize, bsb: &BaseCircuitBuilder<F>) -> Self {
+    pub fn new(lookup_bits: usize) -> Self {
         // Note 254/4 = 63.5
         assert!(PRECISION_BITS <= 63, "support only precision bits <= 63");
         assert!(PRECISION_BITS >= 32, "support only precision bits >= 32");
 
         // let ONE : F = F::ONE;
 
-        let gate = bsb.range_chip();
+        //let gate = bsb.range_chip();
 
         // Simple uniform symmetric quantization scheme which enforces zero point to be exactly 0
         // to reduce lots of computations.
@@ -68,9 +72,8 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BI
         for _ in 2..F::NUM_BITS {
             pow_of_two.push(two * pow_of_two.last().unwrap());
         }
-
         Self {
-            gate,
+            gate:None,
             quantization_scale,
             max_value,
             bn254_max,
@@ -80,9 +83,6 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BI
         }
     }
 
-    pub fn default(lookup_bits: usize, bsb: &BaseCircuitBuilder<F>) -> Self {
-        Self::new(lookup_bits, bsb)
-    }
 
 
     fn nh_get_lower_128(&self, num : F) -> u128
@@ -223,7 +223,7 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BI
     }
 }
 
-pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
+pub trait FixedPointInstructions041<F: ScalarField, const PRECISION_BITS: u32> {
     /// Fixed point decimal and its arithmetic functions.
     /// [ref] https://github.com/XMunkki/FixPointCS/blob/c701f57c3cfe6478d1f6fd7578ae040c59386b3d/Cpp/Fixed64.h
     /// [ref] https://github.com/abdk-consulting/abdk-libraries-solidity/blob/master/ABDKMath64x64.sol
@@ -485,18 +485,18 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     ) -> (AssignedValue<F>, AssignedValue<F>);
 }
 
-impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECISION_BITS>
-    for FixedPointChip<F, PRECISION_BITS>
+impl<'a, F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions041<F, PRECISION_BITS>
+    for FixedPointChip041<'a, F, PRECISION_BITS>
 {
     type Gate = GateChip<F>;
     type RangeGate = RangeChip<F>;
 
     fn range_gate(&self) -> &Self::RangeGate {
-        &self.gate
+        &self.gate.unwrap()
     }
 
     fn gate(&self) -> &Self::Gate {
-        &self.gate.gate()
+        &self.gate.unwrap().gate()
     }
 
 
